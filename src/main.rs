@@ -1,10 +1,13 @@
 //! mxb-mods: install MX Bikes mods without wrecking their folder layout.
 //!
+//!   mxb-mods                                     (opens the window)
 //!   mxb-mods install <archive | folder | file.pkz>
 //!   mxb-mods list
 //!
 //! Extraction goes through bsdtar (Windows' own tar.exe, or `bsdtar` on SteamOS), which reads
 //! zip, rar and 7z. On Linux the mods folder is found inside MX Bikes' Proton prefix.
+
+mod gui;
 
 use std::collections::BTreeSet;
 use std::env;
@@ -23,6 +26,10 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let mods = mods_dir();
     let result = match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        [] => {
+            gui::run(mods);
+            return;
+        }
         ["install", src] => install(Path::new(src), &mods),
         ["list"] => list(&mods),
         _ => {
@@ -31,9 +38,12 @@ fn main() {
             exit(2)
         }
     };
-    if let Err(e) = result {
-        eprintln!("error: {e}");
-        exit(1)
+    match result {
+        Ok(lines) => lines.iter().for_each(|l| println!("{l}")),
+        Err(e) => {
+            eprintln!("error: {e}");
+            exit(1)
+        }
     }
 }
 
@@ -75,7 +85,8 @@ fn library_paths(vdf: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-fn install(src: &Path, mods: &Path) -> R<()> {
+/// Returns one "installed tracks/Foo" line per mod.
+fn install(src: &Path, mods: &Path) -> R<Vec<String>> {
     if !mods.is_dir() {
         return Err(format!("mods folder not found: {}", mods.display()).into());
     }
@@ -102,10 +113,7 @@ fn install(src: &Path, mods: &Path) -> R<()> {
         fs::create_dir_all(to.parent().unwrap())?;
         fs::copy(from, &to)?;
     }
-    for item in summary(&plan) {
-        println!("installed {item}");
-    }
-    Ok(())
+    Ok(summary(&plan).into_iter().map(|item| format!("installed {item}")).collect())
 }
 
 /// Work out where each file goes. Order matters: an archive that is already laid out like
@@ -176,22 +184,23 @@ fn pkz_kind(pkz: &Path) -> &'static str {
     }
 }
 
-fn list(mods: &Path) -> R<()> {
+fn list(mods: &Path) -> R<Vec<String>> {
+    let mut out = vec![];
     for c in ["tracks", "bikes", "tyres", "rider"] {
         let dir = mods.join(c);
         let Ok(entries) = fs::read_dir(&dir) else { continue };
-        println!("{c}/");
+        out.push(format!("{c}/"));
         for e in entries.flatten() {
-            println!("  {}", e.file_name().to_string_lossy());
+            out.push(format!("  {}", e.file_name().to_string_lossy()));
             // rider/ holds helmets/, boots/... with the actual mods one level down
             if c == "rider" {
                 for sub in fs::read_dir(e.path()).into_iter().flatten().flatten() {
-                    println!("    {}", sub.file_name().to_string_lossy());
+                    out.push(format!("    {}", sub.file_name().to_string_lossy()));
                 }
             }
         }
     }
-    Ok(())
+    Ok(out)
 }
 
 /// "tracks/JS7 Compound", "bikes/Foo.pkz", "rider/helmets/Bar" instead of every file.
